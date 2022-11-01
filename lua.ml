@@ -62,7 +62,7 @@ let mul1 = typecheck (Mul(Number(Integer 3), Number(Float 3.34))) (NumberType);;
 (* Sub *)
 let sub1 = typecheck (Sub(Number(Integer 3), Number(Float 3.34))) (NumberType);;
 (* Div *)
-let mul1 = typecheck (Div(Number(Integer 3), Number(Float 3.34))) (NumberType);;
+let div1 = typecheck (Div(Number(Integer 3), Number(Float 3.34))) (NumberType);;
 (* Var *)
 let var1 = typecheck (Var("x")) (BooleanType)
 let var2 = typecheck (Var("y")) (StringType)
@@ -70,6 +70,6 @@ let var3 = typecheck (Var("z")) (NumberType)
 (* Eq *)
 let eq1 = typecheck (Eq(Number(Integer 3), Number(Float 3.34))) (BooleanType);;
 let eq2 = typecheck (Eq(Boolean true, Boolean false)) (BooleanType);;
-let eq1 = typecheck (Eq(String "s", String "s2")) (BooleanType);;
+let eq3 = typecheck (Eq(String "s", String "s2")) (BooleanType);;
 (* And *)
 let and1 = typecheck (And(Boolean true, Boolean false)) (BooleanType);;
