@@ -1,75 +1,149 @@
+open List
 
-(* Identifiers are of type string *)
 type ident = string
 type num = Integer of int | Float of float
 
-(* Datatypes *)
-type typ = BooleanType | NumberType | StringType | TableType
 
+(* type checker *)
+type typ = NumTy | BooleanTy | StringTy | NilTy | TableTy
 
 
 (* Expressions *)
-type exp = Number of num    (* Numbers may be float or int *)
-        | Boolean of bool 
-        | String of string
+type exp = Var of ident     (* x *)
+        | Number of num     (* Numbers may be float or int *)
+        | Boolean of bool   (* Note: types are implied *)
+        | String of string  (* Note: types are implied *)
         | Table of ident    (* x *)
-        | Add of exp * exp  (* a + b *) 
+        | Add of exp * exp  (* a + b *)
         | Mul of exp * exp  (* a * b *)
         | Sub of exp * exp  (* a - b *)
         | Div of exp * exp  (* a / b *)
-        | Var of ident      (* x *)
         | Eq of exp * exp   (* a = b *)
         | And of exp * exp  (* a and b *)
+        | Or of exp * exp   (* a or b *)
+
+
+(* Commands *)
+type cmd = Assign of ident * exp
+        | Seq of cmd * cmd
+        | Skip
+        | IfElse of exp * cmd * cmd
+        | While of exp * cmd
+        | Call of ident * ident * exp list
+        | Return of exp
+        | TableLookup of ident * exp    
+
+
+
+(* Defines a current context *)
+type context = ident -> typ option
+let empty_context = fun x -> None
+
+(* Lookup ident's type in current context *)
+let lookup (gamma : context) (x : ident) : typ option = gamma x
+
+
+
+(* Returns the type of the given expression in the current context *)
+let rec type_of (gamma : context) (e : exp) : typ option =
+        match e with
+        | Var x -> lookup gamma x
+        | Number n -> Some NumTy
+        | Boolean b -> Some BooleanTy
+        | String s -> Some StringTy
+        | Table i -> Some TableTy
+        | Add (e1,e2) | Sub (e1,e2) | Mul (e1,e2) | Div (e1,e2) -> 
+                (match type_of gamma e1, type_of gamma e2 with
+                 | Some NumTy, Some NumTy -> Some NumTy
+                 | _, _ -> None)       (* Cannot perform arithmetic on Strings, Booleans, Tables, or nil *)
+        | Eq (e1,e2) | And (e1,e2) | Or (e1,e2) -> 
+                (match type_of gamma e1, type_of gamma e2 with
+                 | Some t1, Some t2 -> Some BooleanTy   (* All types are comparable *)
+                 | _, _ -> None)
+        
+        
+        
+(* Returns true if the given command is type correct *)
+let rec typecheck_cmd (gamma : context) (c : cmd) : bool =
+        match c with
+        | Assign (i,e) ->       (* Variable types are implied, and can be changed anytime *)
+                (match lookup gamma i, type_of gamma e with
+                 | Some t1, Some t2 -> true
+                 | _, _ -> false)
+        | Seq (c1,c2) -> typecheck_cmd gamma c1 && typecheck_cmd gamma c2
+        | Skip -> true
+        | IfElse (e,c1,c2) -> type_of gamma e = Some BooleanTy && typecheck_cmd gamma c1 && typecheck_cmd gamma c2
+        | While (e,c) -> type_of gamma e = Some BooleanTy && typecheck_cmd gamma c
+        (*| Call of (i1,i2,eList)*)
+        (*| Return of *)
+        (*| TableLookup of ident * exp                                          TODO *)
+        | _ -> false
+
+
+
+
+(* semantics *)
+type value = NumVal of num | BooleanVal of bool | StringVal of string | NilVal
+   
+type entry = Val of value | Fun of ident list * cmd
+
+type state = ident -> entry option
+let empty_state = fun x -> None
+let lookup (s : state) (x : ident) : entry option = s x
+let update (s : state) (x : ident) (e : entry) : state = fun y -> if y = x then Some e else s y
+
+
+let rec eval_exp (e : exp) (s : state) : value option =
+        match e with
+        | Var x -> (match lookup s x with
+                    | Some (Val v) -> Some v
+                    | _ -> None)
+        | Number n -> Some (NumVal n)      
+        | Boolean b -> Some (BooleanVal b)
+        | String s -> Some (StringVal s)
+        | Table i -> None                       (*                                                              TODO            *)
+        | Add (e1,e2) -> (match eval_exp e1 s, eval_exp e2 s with
+                          | Some (NumVal i1), Some (NumVal i2) -> (match (i1,i2) with
+                                                                   | (Integer ii1, Integer ii2) -> Some (NumVal (Integer (ii1+ii2))) 
+                                                                   | (Float f1, Float f2) -> None
+                                                                   | (Integer ii1, Float f1) -> None
+                                                                   | (Float f1, Integer ii1) -> None
+                                                                   )
+                          | _, _ -> None)
+        | Mul (e1,e2) -> None
+        | Sub (e1,e2) -> None
+        | Div (e1,e2) -> None
+        | Eq (e1,e2) -> None
+        | And (e1,e2) -> None
+        | Or (e1,e2) -> None
+
+
+
+        
+
+        let x = Some (NumVal (Float (0. + 1.1)))
 
 
 
 
 
-
-(* typecheck *)
-(* Returns true if exp e is of type t *)
-let rec typecheck (e : exp) (t : typ) : bool = 
-    match e with
-    | Number _ -> t = NumberType (* Return true if number is of type NumberType *)
-    | Boolean _ -> t = BooleanType 
-    | String _ -> t = StringType
-    | Table _ -> t = TableType
-    | Add (e1,e2) -> (typecheck e1 NumberType) && (typecheck e2 NumberType) && (t = NumberType) (* Return true if e1 and e2 are numbers and t is number *)
-    | Mul (e1,e2) -> (typecheck e1 NumberType) && (typecheck e2 NumberType) && (t = NumberType)
-    | Sub (e1,e2) -> (typecheck e1 NumberType) && (typecheck e2 NumberType) && (t = NumberType)
-    | Div (e1,e2) -> (typecheck e1 NumberType) && (typecheck e2 NumberType) && (t = NumberType)
-    | Var e1 -> false     (* impl later with lookup *)
-    | Eq (e1,e2) -> ((typecheck e1 BooleanType && typecheck e2 BooleanType) || (typecheck e1 NumberType && typecheck e2 NumberType) || (typecheck e1 StringType && typecheck e2 StringType)) && t = BooleanType
-    | And (e1,e2) -> (typecheck e1 BooleanType) && (typecheck e2 BooleanType) && (t = BooleanType)      (* Lua allows comparing 'and' with strings and ints, but not necessary to implement *)
-;;
-
-(* Tests *)
-
-(* Number *)
-let number1 = typecheck (Number(Integer 3)) (NumberType);;
-let number2 = typecheck (Number(Float 3.34)) (NumberType);;
-(* Boolean *)
-let boolean1 = typecheck (Boolean true) (BooleanType);;
-let boolean2 = typecheck (Boolean false) (BooleanType);;
-(* String *)
-let string1 = typecheck (String "s") (StringType);;
-(* Table *)
-let table1 = typecheck (Table "tableIdent") (TableType);;
-(* Add *)
-let add1 = typecheck (Add(Number(Integer 3), Number(Float 3.34))) (NumberType);;
-(* Mul *)
-let mul1 = typecheck (Mul(Number(Integer 3), Number(Float 3.34))) (NumberType);;
-(* Sub *)
-let sub1 = typecheck (Sub(Number(Integer 3), Number(Float 3.34))) (NumberType);;
-(* Div *)
-let div1 = typecheck (Div(Number(Integer 3), Number(Float 3.34))) (NumberType);;
-(* Var *)
-let var1 = typecheck (Var("x")) (BooleanType)
-let var2 = typecheck (Var("y")) (StringType)
-let var3 = typecheck (Var("z")) (NumberType)
-(* Eq *)
-let eq1 = typecheck (Eq(Number(Integer 3), Number(Float 3.34))) (BooleanType);;
-let eq2 = typecheck (Eq(Boolean true, Boolean false)) (BooleanType);;
-let eq3 = typecheck (Eq(String "s", String "s2")) (BooleanType);;
-(* And *)
-let and1 = typecheck (And(Boolean true, Boolean false)) (BooleanType);;
+        (*
+        | Var x -> (match lookup s x with Some (Val v) -> Some v | _ -> None)
+        | Num i -> Some (IntVal i)
+        | Add (e1, e2) -> (match eval_exp e1 s, eval_exp e2 s with
+                           | Some (IntVal i1), Some (IntVal i2) -> Some (IntVal (i1 + i2))
+                           | _, _ -> None)
+        | Sub (e1, e2) -> (match eval_exp e1 s, eval_exp e2 s with
+                           | Some (IntVal i1), Some (IntVal i2) -> Some (IntVal (i1 - i2))
+                           | _, _ -> None)
+        | Bool b -> Some (BoolVal b)
+        | And (e1, e2) -> (match eval_exp e1 s, eval_exp e2 s with
+                           | Some (BoolVal b1), Some (BoolVal b2) -> Some (BoolVal (b1 && b2))
+                           | _, _ -> None)
+        | Or (e1, e2) -> (match eval_exp e1 s, eval_exp e2 s with
+                           | Some (BoolVal b1), Some (BoolVal b2) -> Some (BoolVal (b1 || b2))
+                           | _, _ -> None)
+        | Eq (e1, e2) -> (match eval_exp e1 s, eval_exp e2 s with
+                           | Some v1, Some v2 -> Some (BoolVal (v1 = v2))
+                           | _, _ -> None)
+      *)
