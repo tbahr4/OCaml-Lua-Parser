@@ -66,10 +66,11 @@ let rec type_of (gamma : context) (e : exp) : typ option =
                 (match type_of gamma e1, type_of gamma e2 with
                  | Some t1, Some t2 -> Some BooleanTy   (* All types are comparable *)
                  | _, _ -> None)
-        | TableGet (i,e) -> None(*(match type_of gamma i with     (* Any expr type is allowed as a table key, except Nil *)      
-                             | Some TableTy -> None
-                             | _ -> None
-                            )*)
+        | TableGet (i,e) -> None     (* Any expr type is allowed as a table key, except Nil *)      
+                
+                (*  ^^^^^  *)
+                (* Not sure, store with list or separately? or easier way *)
+
         
    
 
@@ -99,7 +100,7 @@ let rec typecheck_cmd (gamma : context) (c : cmd) : bool =
 
 
 (* semantics *)
-type value = NumVal of num | BooleanVal of bool | StringVal of string | NilVal | TableVal
+type value = NumVal of num | BooleanVal of bool | StringVal of string | NilVal | TableVal of (value * value) list
    
             (*              fun (list of params) { cmd }  *)
 type entry = Val of value | Fun of ident list * cmd
@@ -110,6 +111,18 @@ let lookup (s : state) (x : ident) : entry option = s x
 let update (s : state) (x : ident) (e : entry) : state = fun y -> if y = x then Some e else s y
 
 
+
+
+(* Retrieves the element from the table if it exists, or Nil if not *)
+let rec get_table (t:(value * value) list) (v:value) : value =
+        match t with
+        | [] -> NilVal             (* Not found, return Nil *)
+        | (headKey, headVal)::tail when headKey = v -> headVal        (* found, return value *)
+        | (headKey, headVal)::tail -> get_table tail v                (* Not found, continue down list *)
+        
+
+
+
 let rec eval_exp (e : exp) (s : state) : value option =
         match e with
         | Var x -> (match lookup s x with
@@ -118,7 +131,11 @@ let rec eval_exp (e : exp) (s : state) : value option =
         | Number n -> Some (NumVal n)      
         | Boolean b -> Some (BooleanVal b)
         | String s -> Some (StringVal s)
-        | Table i -> None                       (*                                                              TODO            *)
+        | Nil -> Some NilVal
+        | Table i -> (match lookup s i with
+                      | Some (Val TableVal t) -> Some (TableVal t)                                     
+                      | _ -> None
+                     )
         | Add (e1,e2) -> (match eval_exp e1 s, eval_exp e2 s with
                           | Some (NumVal i1), Some (NumVal i2) -> (match (i1,i2) with
                                                                    | (Integer ii1, Integer ii2) -> Some (NumVal (Integer (ii1+ii2))) 
@@ -160,6 +177,15 @@ let rec eval_exp (e : exp) (s : state) : value option =
         | Or (e1,e2) -> (match eval_exp e1 s, eval_exp e2 s with
                          | Some (BooleanVal b1), Some (BooleanVal b2) -> Some (BooleanVal (b1 || b2))
                          | _, _ -> None)
+        | TableGet (i,e) ->(match lookup s i with               (* Get the table, then search it *)
+                            | Some (Val TableVal t) -> (match eval_exp e s with
+                                                        | Some v -> if v = NilVal then None else Some (get_table t v)
+                                                        | _ -> None
+                                                       )
+                            | _ -> None 
+                           )               
+                            
+
 
 
 let rec eval_exps (es : exp list) (s : state) : value list option =
@@ -180,6 +206,31 @@ type stack = (state * ident) list
 type config = cmd * stack * state
 
 
+
+
+
+
+
+(* Adds element to table or replaces it; t[e1] = e2 *)                  
+(* t -> list of (key, value) *)
+let rec set_table_helper t (v1:value) (v2:value) (final:(value * value) list) =
+        match t with
+        | [] -> final @ [(v1,v2)]         (* Not found; add to list without replacement *)
+        | (headKey, headVal)::tail when (headKey = v1) && (v2 = NilVal) -> final @ tail                 (* Matched when value = Nil; remove value and add rest of list *)
+        | (headKey, headVal)::tail when (headKey = v1) -> let new_final = final @ [(v1,v2)] in          (* Matched; overwrite value and add rest of list *)
+                                                          new_final @ tail      
+        | head::tail -> set_table_helper tail v1 v2 final @ [head]      (* Not matched; add head to final and continue *)
+
+let set_table t (v1:value) (v2:value) =         
+        (* If nil key, do not add *)
+        if v1 = NilVal then 
+                t 
+        else
+                let new_table = set_table_helper t v1 v2 [] in
+                new_table       (* ret new table *)
+
+
+                
 
 
 let rec step_cmd (c : cmd) (k : stack) (s : state) : config option =
@@ -205,11 +256,19 @@ let rec step_cmd (c : cmd) (k : stack) (s : state) : config option =
         | Return e -> (match eval_exp e s, k with
                         | Some v, (s', x) :: k' -> Some (Skip, k', update s' x (Val v))
                         | _, _ -> None)
-        | TableSet (i,e1,e2) -> None                             (*                                   TODO *)
-        | DefineTable i -> Some (Skip, k, update s i (Val TableVal))
-
-let a:entry = Val (BooleanVal true)
-let b = update empty_state "x" a
+        | TableSet (i,e1,e2) -> (match lookup s i with          (* could have used eval_exp instead *)
+                                 | Some (Val TableVal t) -> (match (eval_exp e1 s, eval_exp e2 s) with
+                                                             | Some v1, Some v2 -> if v1 = NilVal then None else let new_table = (set_table t v1 v2) in   (* Add t[e1] = e2 *)
+                                                                                                                 Some (Skip, k, update s i (Val (TableVal new_table)))
+                                                             | _, _ -> None
+                                                            )
+                                 | _ -> None
+                                )
+        | DefineTable i -> Some (Skip, k, update s i (Val (TableVal [])))       (* Define table to initially be empty *)
+(*
+        let a:entry = Val (BooleanVal true)
+        let b = update empty_state "x" a
+*)
 
 let rec run_config (con : config) : config =
         let (c, k, s) = con in
@@ -228,3 +287,46 @@ run_config (c, [], s)
 let config1 = (DefineTable "tab", [], empty_state)
 let (res_c, res_k, res_s) = run_config config1;;
 let l = lookup res_s "tab"
+
+(* Test SetTable *)
+let tSet1 = TableSet ("tab", Number (Integer 1), Number (Integer 50)) 
+let tSet2 = TableSet ("tab", Number (Integer 2), Number (Float 2.5))
+let tSet3 = TableSet ("tab", String "test", Boolean true)
+let tSet4 = TableSet ("tab", Number (Integer 1), Nil) 
+let tSet5 = TableSet ("tab", Nil, Number (Float 3.4)) 
+let config2 = (tSet1, res_k, res_s)
+let (res_c, res_k, res_s) = run_config config2;;
+let l2 = lookup res_s "tab"
+
+;;print_endline "\n\n\n\n\n\n\n"
+
+let (res_c, res_k, res_s) = run_config (tSet2, res_k, res_s)
+let l3 = lookup res_s "tab"
+let (res_c, res_k, res_s) = run_config (tSet3, res_k, res_s)
+let l3 = lookup res_s "tab"
+
+(* Test SetTable for Nil Value (removes value from table) *)
+;;print_endline "\n\nNil value:"
+let (res_c, res_k, res_s) = run_config (tSet4, res_k, res_s)
+let l3 = lookup res_s "tab"
+
+(* Test SetTable for Nil key (should not add to table) *)
+;;print_endline "\n\nNil key:"
+let (res_c, res_k, res_s) = run_config (tSet5, res_k, res_s)
+let l3 = lookup res_s "tab"
+
+
+(* Test eval_exp *)
+;;print_endline "\n\nTesting eval_exp for table:"
+let evalTab = eval_exp (Table "tab") res_s
+
+
+
+(* Test GetTable *)
+;;print_endline "\n\nTest GetTable:"
+let tGet1 = TableGet ("tab", String "test")
+
+let l = eval_exp tGet1 res_s
+
+
+(* Test Redefinition of table *)
