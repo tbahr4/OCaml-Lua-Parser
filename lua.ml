@@ -72,8 +72,8 @@ let rec type_of (gamma : context) (e : exp) : typ option =
                 (* Not sure, store with list or separately? or easier way *)
 
         
-   
 
+                
         
 (* Returns true if the given command is type correct *)
 let rec typecheck_cmd (gamma : context) (c : cmd) : bool =
